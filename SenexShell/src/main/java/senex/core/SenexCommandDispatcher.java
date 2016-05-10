@@ -15,6 +15,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.env.Environment;
 import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.stereotype.Component;
@@ -37,7 +38,7 @@ public class SenexCommandDispatcher implements ApplicationRunner {
 	@Override
 	public void run(ApplicationArguments args) throws Exception {
 		List<String> commands= getCommandsList(args);
-		
+
 		if (commands.isEmpty()) {
 			logError(logger, "CommandDispatchFailed", 
 					"providedArgs", StringUtils.join(args.getSourceArgs(), ", "),
@@ -47,22 +48,29 @@ public class SenexCommandDispatcher implements ApplicationRunner {
 
 		Map<String, String> commandMap = enlistAllAvailableCommands();
 
-		String commandName = commands.get(0);
-		if (commandMap.containsKey(commandName.toLowerCase())) {
-			Senex.logDebug(logger, "ResolvingCommandBean", "beanName", commandName);
-			Object o = appContext.getBean(commandMap.get(commandName));
-			if (o != null && o instanceof SenexCommandBase) {
-				((SenexCommandBase) o).init();
-				((SenexCommandBase) o).execute();
-				((SenexCommandBase) o).cleanUp();
-				return;
+		for(String commandName : commands){
+			if (commandMap.containsKey(commandName.toLowerCase())) {
+				Senex.logInfo(logger, "ResolvingCommandBean", "beanName", commandMap.get(commandName));
+				Object o = appContext.getBean(commandMap.get(commandName));
+				Senex.out.println("Found object of :"+o);
+				if (o != null && o instanceof SenexCommandBase) {
+					((SenexCommandBase) o).init();
+					((SenexCommandBase) o).execute();
+					((SenexCommandBase) o).cleanUp();
+				}
 			}
 		}
 	}
 
 	private List<String> getCommandsList(ApplicationArguments args) {
 		List<String> commandsList = Lists.newArrayList();
-		
+		for(String cmd: args.getSourceArgs()){
+			Senex.out.println(cmd);
+
+			if(!cmd.trim().startsWith("--")){
+				commandsList.add(cmd);
+			}
+		}
 		return commandsList;
 	}
 	
@@ -80,30 +88,38 @@ public class SenexCommandDispatcher implements ApplicationRunner {
 			try{
 				Class commandClass = Class.forName(bd.getBeanClassName());
 		
-				if (commandClass.isAnnotationPresent(Component.class)) {
-	
-					String commandName = null, commandBeanName = null;
-	
-					Annotation an = commandClass.getAnnotation(SenexCommand.class);
-					if (an != null) {
-						commandName = ((SenexCommand) an).name();
-					}
-	
-					an = commandClass.getAnnotation(Component.class);
-					if (an != null) {
-						Component co = (Component) an;
-						commandBeanName = co.value();
-					}
-	
-					if (StringUtils.isNotBlank(commandName) && StringUtils.isNotBlank(commandBeanName)) {
-						commandMap.put(commandName.toLowerCase(), commandBeanName);
-						logDebug(logger, "EnlistingCommands", 
-								"className", bd.getBeanClassName(), 
-								"command", commandName.toLowerCase(),
-								"commandBeanName", commandBeanName);
-					}
+				if(AnnotationUtils.isAnnotationDeclaredLocally(SenexCommand.class, commandClass)){
+					Senex.out.println("Found a senex command: "+commandClass.getSimpleName());
 					
+					if (AnnotationUtils.isAnnotationDeclaredLocally(Component.class, commandClass)) {
+		
+						String commandName = null, commandBeanName = null;
+		
+						Annotation an = commandClass.getAnnotation(SenexCommand.class);
+						if (an != null) {
+							commandName = ((SenexCommand) an).name();
+						}
+
+						an = commandClass.getAnnotation(Component.class);
+						commandBeanName = ((Component)an).value().trim();  
+						if( StringUtils.isBlank(commandBeanName)){
+							commandBeanName = commandClass.getSimpleName();
+							commandBeanName = commandBeanName.substring(0, 1).toLowerCase() + commandBeanName.substring(1);
+						}
+		
+						Senex.out.println("Resoved as : "+ commandName + " - "+ commandBeanName);
+						
+						if (StringUtils.isNotBlank(commandName) && StringUtils.isNotBlank(commandBeanName)) {
+							commandMap.put(commandName.toLowerCase(), commandBeanName);
+							logInfo(logger, "EnlistingCommands", 
+									"className", bd.getBeanClassName(), 
+									"command", commandName.toLowerCase(),
+									"commandBeanName", commandBeanName);
+						}
+						
+					}
 				}
+
 			}catch(Exception er){
 				er.printStackTrace();
 			}
